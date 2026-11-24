@@ -1,0 +1,161 @@
+{
+  "eval_set_id": "sre_triage_core_evalset",
+  "name": "SRE Triage & Postmortem Commander Golden Eval Suite",
+  "description": "Verifies tool trajectories, institutional memory recall, safety guardrails, and root-cause accuracy.",
+  "eval_cases": [
+    {
+      "eval_id": "case_01_list_active_alerts",
+      "conversation": [
+        {
+          "invocation_id": "inv-001",
+          "user_content": {
+            "parts": [
+              {
+                "text": "What production alerts are currently firing?"
+              }
+            ],
+            "role": "user"
+          },
+          "final_response": {
+            "parts": [
+              {
+                "text": "There are 3 firing alerts: SEV1 on payments-api (INC-2026-0412: High HTTP 503 Error Rate & P99 Latency Spike), SEV2 on auth-gateway (INC-2026-0419), and SEV2 on order-fulfillment (INC-2026-0425)."
+              }
+            ],
+            "role": "model"
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "list_active_alerts",
+                "args": {}
+              }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "sre_triage_agent",
+        "user_id": "eval_sre_user",
+        "state": {}
+      }
+    },
+    {
+      "eval_id": "case_02_past_incident_memory_recall",
+      "conversation": [
+        {
+          "invocation_id": "inv-002",
+          "user_content": {
+            "parts": [
+              {
+                "text": "Have we seen a database connection pool exhaustion issue on payments-api before?"
+              }
+            ],
+            "role": "user"
+          },
+          "final_response": {
+            "parts": [
+              {
+                "text": "Yes. Historical incident INC-2026-0198 affected payments-api with HTTP 503 spikes and 100% DB connection pool saturation caused by an unclosed SQLAlchemy session inside a retry block. It was resolved by rolling back to the previous stable release."
+              }
+            ],
+            "role": "model"
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "search_past_incidents",
+                "args": {
+                  "service_name": "payments-api",
+                  "symptom_query": "connection pool"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "sre_triage_agent",
+        "user_id": "eval_sre_user",
+        "state": {}
+      }
+    },
+    {
+      "eval_id": "case_03_full_incident_triage_payments",
+      "conversation": [
+        {
+          "invocation_id": "inv-003",
+          "user_content": {
+            "parts": [
+              {
+                "text": "Triage the SEV1 outage on payments-api, identify the root cause, propose a safe remediation plan, and generate a blameless postmortem."
+              }
+            ],
+            "role": "user"
+          },
+          "final_response": {
+            "parts": [
+              {
+                "text": "INC-2026-0412 (SEV1) on payments-api was caused by deployment v2.18.4 (commit a91f3c2) leaking DB connections on retry paths in ledger_writer.py, exhausting the pool (100% saturation, 18.4% 503s, 4820ms p99). Recommended mitigation: disable feature flag async_ledger_retry_v2 or request human approval to roll back to v2.18.3. Postmortem artifact saved and lessons recorded in long-term memory."
+              }
+            ],
+            "role": "model"
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "list_active_alerts",
+                "args": {
+                  "service_name": "payments-api"
+                }
+              },
+              {
+                "name": "query_service_logs",
+                "args": {
+                  "service_name": "payments-api"
+                }
+              },
+              {
+                "name": "get_service_metrics",
+                "args": {
+                  "service_name": "payments-api"
+                }
+              },
+              {
+                "name": "get_recent_deployments",
+                "args": {
+                  "service_name": "payments-api"
+                }
+              },
+              {
+                "name": "search_runbooks",
+                "args": {
+                  "service_name": "payments-api"
+                }
+              },
+              {
+                "name": "search_past_incidents",
+                "args": {
+                  "service_name": "payments-api"
+                }
+              },
+              {
+                "name": "save_postmortem_artifact",
+                "args": {}
+              },
+              {
+                "name": "save_incident_lesson",
+                "args": {}
+              }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "sre_triage_agent",
+        "user_id": "eval_sre_user",
+        "state": {}
+      }
+    }
+  ]
+}
