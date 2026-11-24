@@ -24,12 +24,12 @@ class Settings(BaseSettings):
 
     # Model configuration
     agent_model: str = Field(
-        default="gemini-2.5-flash",
-        description="Default fast Gemini model for triage, investigation, and drafting.",
+        default="gemini-3.8-flash",
+        description="Default Gemini 3.8 Flash model for triage, investigation, and drafting.",
     )
     agent_pro_model: str = Field(
-        default="gemini-2.5-pro",
-        description="Higher-reasoning Gemini model for safety critique and root-cause synthesis.",
+        default="gemini-3.8-flash",
+        description="Gemini model for safety critique and root-cause synthesis.",
     )
 
     # Persistence & Memory
@@ -72,9 +72,9 @@ class Settings(BaseSettings):
         description="Exponential-backoff retry attempts for transient 429/500/503/504 LLM errors.",
     )
     context_cache_min_tokens: int = Field(
-        default=2048,
+        default=4096,
         ge=0,
-        description="Minimum prompt tokens before enabling Gemini context caching.",
+        description="Minimum prompt tokens before enabling Gemini 3 context caching.",
     )
     context_cache_ttl_seconds: int = Field(
         default=1800,
