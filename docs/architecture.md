@@ -38,8 +38,9 @@ flowchart TD
 | Layer | Mechanism | Purpose |
 | :--- | :--- | :--- |
 | **Short-Term Working Context** | ADK Session `state` (`output_key`) | Passes structured summaries (`incident_intake`, `log_metrics_findings`, `deploy_findings`, `runbook_memory_findings`, `remediation_plan`) cleanly across stages without bloated raw logs. |
+| **Context Caching & Compaction** | ADK `App` (`ContextCacheConfig` + `EventsCompactionConfig`) | Reuses cached Gemini prompt prefixes (`min_tokens=2048`, `ttl_seconds=1800`) and compacts long turn histories every 6 turns while retaining 2 overlap events verbatim. |
 | **Context Window Hygiene** | `Settings.max_log_lines` | Bounds log retrieval payloads so verbose outages never overflow context. |
-| **Long-Term Institutional Memory** | `IncidentMemoryStore` (SQLite) | Persists resolved root causes, mitigations, and lessons learned across sessions and restarts; pre-seeded with historical outages. |
+| **Async Long-Term Memory** | `IncidentMemoryStore` (SQLite) + `after_agent_async_memory_callback` | Offloads incident persistence (`schedule_save_incident` / `asyncio.to_thread`) and ADK `add_session_to_memory` to non-blocking background `asyncio.Task`s with graceful lifespan flush. |
 | **Downloadable Artifacts** | `ToolContext.save_artifact` | Exports standardized GitHub-Flavored Markdown blameless postmortems (`postmortem_<id>.md`). |
 
 ## 3. Safety Guardrails & Security Model
