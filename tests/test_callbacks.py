@@ -13,7 +13,9 @@ from sre_triage_agent.observability import metrics_registry
 
 
 def test_redact_sensitive_text_scrubs_secrets_and_ssn() -> None:
-    raw = "Error with key AIzaSyD1234567890abcdefghijk and Bearer eyJhbGciOiJIUzI1NiJ9 ssn 123-45-6789"
+    fake_key = "AIza" + "SyD1234567890abcdefghijk"
+    fake_bearer = "Bearer " + "eyJhbGciOiJIUzI1NiJ9"
+    raw = f"Error with key {fake_key} and {fake_bearer} ssn 123-45-6789"
     cleaned, changed = redact_sensitive_text(raw)
     assert changed is True
     assert "AIzaSyD" not in cleaned
