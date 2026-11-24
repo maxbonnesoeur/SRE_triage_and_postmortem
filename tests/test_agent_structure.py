@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from google.adk.agents import LlmAgent, LoopAgent, ParallelAgent, SequentialAgent
+from google.adk.models.google_llm import Gemini
 
-from sre_triage_agent.agent import build_root_agent
+from sre_triage_agent.agent import build_adk_app, build_root_agent
 from sre_triage_agent.mcp_server.ops_mcp_server import (
     mcp,
     mcp_get_service_metrics,
@@ -30,6 +31,14 @@ def test_multi_agent_topology_structure() -> None:
     assert isinstance(remediation_loop, LoopAgent)
     assert len(remediation_loop.sub_agents) == 2
     assert isinstance(postmortem, LlmAgent)
+    assert isinstance(commander.model, Gemini)
+    assert commander.model.retry_options is not None
+    assert commander.model.retry_options.attempts == 5
+
+    adk_app = build_adk_app(commander)
+    assert adk_app.context_cache_config is not None
+    assert adk_app.events_compaction_config is not None
+    assert adk_app.events_compaction_config.compaction_interval == 6
 
 
 def test_pydantic_schemas_validation() -> None:

@@ -42,7 +42,16 @@ class StructuredJsonFormatter(logging.Formatter):
         }
         if trace_id:
             payload["trace_id"] = trace_id
-        for key in ("agent_name", "tool_name", "latency_ms", "status", "incident_id", "guardrail"):
+        for key in (
+            "agent_name",
+            "tool_name",
+            "phase",
+            "intended_args",
+            "latency_ms",
+            "status",
+            "incident_id",
+            "guardrail",
+        ):
             value = getattr(record, key, None)
             if value is not None:
                 payload[key] = value
@@ -61,14 +70,24 @@ class MetricsRegistry:
     def reset(self) -> None:
         with self._lock:
             self.tool_calls_total: int = 0
+            self.tool_intents_total: int = 0
             self.tool_errors_total: int = 0
             self.guardrail_blocks_total: int = 0
             self.pii_redactions_total: int = 0
+            self.async_memory_tasks_total: int = 0
             self.model_calls_total: int = 0
             self.prompt_tokens_total: int = 0
             self.output_tokens_total: int = 0
             self.tool_calls_by_name: dict[str, int] = {}
             self.tool_latency_ms_sum: dict[str, float] = {}
+
+    def record_tool_intent(self) -> None:
+        with self._lock:
+            self.tool_intents_total += 1
+
+    def record_async_memory_task(self) -> None:
+        with self._lock:
+            self.async_memory_tasks_total += 1
 
     def record_tool_call(self, tool_name: str, latency_ms: float = 0.0, is_error: bool = False) -> None:
         with self._lock:
@@ -103,9 +122,11 @@ class MetricsRegistry:
             }
             return {
                 "tool_calls_total": self.tool_calls_total,
+                "tool_intents_total": self.tool_intents_total,
                 "tool_errors_total": self.tool_errors_total,
                 "guardrail_blocks_total": self.guardrail_blocks_total,
                 "pii_redactions_total": self.pii_redactions_total,
+                "async_memory_tasks_total": self.async_memory_tasks_total,
                 "model_calls_total": self.model_calls_total,
                 "prompt_tokens_total": self.prompt_tokens_total,
                 "output_tokens_total": self.output_tokens_total,

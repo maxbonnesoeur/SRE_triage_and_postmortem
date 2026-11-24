@@ -6,6 +6,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
+from google.adk.models.google_llm import Gemini
+from google.genai import types
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -62,6 +64,34 @@ class Settings(BaseSettings):
         description="Upper bound on returned log entries for context-window hygiene.",
     )
 
+    # Resilience, Context Caching & History Compaction
+    model_retry_attempts: int = Field(
+        default=5,
+        ge=1,
+        le=10,
+        description="Exponential-backoff retry attempts for transient 429/500/503/504 LLM errors.",
+    )
+    context_cache_min_tokens: int = Field(
+        default=2048,
+        ge=0,
+        description="Minimum prompt tokens before enabling Gemini context caching.",
+    )
+    context_cache_ttl_seconds: int = Field(
+        default=1800,
+        ge=60,
+        description="Context cache TTL in seconds.",
+    )
+    compaction_interval: int = Field(
+        default=6,
+        ge=2,
+        description="Number of turns between automatic ADK event history compactions.",
+    )
+    compaction_overlap_size: int = Field(
+        default=2,
+        ge=0,
+        description="Number of recent events preserved verbatim across compactions.",
+    )
+
     # Observability & Tracing
     service_name: str = Field(default="sre-triage-agent")
     log_level: str = Field(default="INFO")
@@ -79,3 +109,18 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Return cached application settings."""
     return Settings()
+
+
+def build_resilient_model(model_name: str | None = None) -> Gemini:
+    """Create an ADK Gemini model wrapper with exponential-backoff HTTP retry options."""
+    settings = get_settings()
+    return Gemini(
+        model=model_name or settings.agent_model,
+        retry_options=types.HttpRetryOptions(
+            attempts=settings.model_retry_attempts,
+            initial_delay=1.0,
+            max_delay=16.0,
+            exp_base=2.0,
+            http_status_codes=[429, 500, 503, 504],
+        ),
+    )

@@ -67,5 +67,6 @@ def test_after_tool_telemetry_records_counts_and_errors() -> None:
     )
     snap = metrics_registry.snapshot()
     assert snap["tool_calls_total"] == 1
+    assert snap["tool_intents_total"] == 1
     assert snap["tool_errors_total"] == 1
     assert snap["tool_calls_by_name"]["get_service_metrics"] == 1

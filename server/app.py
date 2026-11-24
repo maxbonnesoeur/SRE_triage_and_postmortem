@@ -6,8 +6,11 @@ Run locally:
 
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 import uvicorn
@@ -16,6 +19,7 @@ from google.adk.runners import Runner
 from google.genai import types
 from pydantic import BaseModel, Field
 
+from sre_triage_agent.agent import app as adk_app
 from sre_triage_agent.agent import root_agent
 from sre_triage_agent.config import get_settings
 from sre_triage_agent.memory.session_factory import build_memory_service, build_session_service
@@ -23,8 +27,18 @@ from sre_triage_agent.observability import configure_observability, metrics_regi
 from sre_triage_agent.tools.memory_tools import get_memory_store
 
 APP_NAME = "sre_triage_agent"
+_bg_tasks: set[asyncio.Task[Any]] = set()
 
 configure_observability()
+
+
+@asynccontextmanager
+async def _lifespan(_fastapi_app: FastAPI) -> AsyncIterator[None]:
+    yield
+    await get_memory_store().flush_pending_writes()
+    if _bg_tasks:
+        await asyncio.gather(*list(_bg_tasks), return_exceptions=True)
+
 
 app = FastAPI(
     title="SRE Triage & Postmortem Commander",
@@ -33,13 +47,13 @@ app = FastAPI(
         "and blameless postmortem generation powered by Google ADK."
     ),
     version="0.1.0",
+    lifespan=_lifespan,
 )
 
 _session_service = build_session_service(use_database=False)
 _memory_service = build_memory_service()
 _runner = Runner(
-    agent=root_agent,
-    app_name=APP_NAME,
+    app=adk_app,
     session_service=_session_service,
     memory_service=_memory_service,
 )
@@ -181,6 +195,15 @@ async def run_triage(request: TriageRequest) -> TriageResponse:
         user_id=request.user_id,
         session_id=session_id,
     )
+    if updated_session is not None:
+        task = asyncio.create_task(
+            _memory_service.add_session_to_memory(updated_session),
+            name=f"api-memory-consolidate-{session_id}",
+        )
+        _bg_tasks.add(task)
+        task.add_done_callback(_bg_tasks.discard)
+        metrics_registry.record_async_memory_task()
+
     postmortem_file = (
         updated_session.state.get("postmortem_filename") if updated_session else None
     )

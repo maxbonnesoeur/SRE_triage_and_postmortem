@@ -19,7 +19,7 @@ from sre_triage_agent.callbacks import (
     before_model_guardrail_callback,
     before_tool_guardrail_callback,
 )
-from sre_triage_agent.config import get_settings
+from sre_triage_agent.config import build_resilient_model, get_settings
 from sre_triage_agent.tools.memory_tools import search_past_incidents
 from sre_triage_agent.tools.telemetry_tools import (
     get_recent_deployments,
@@ -50,7 +50,6 @@ def _build_optional_mcp_toolset() -> Any | None:
 
 def build_parallel_investigation_agent() -> ParallelAgent:
     """Create the ParallelAgent that fans out across logs/metrics, deploys, and memory."""
-    settings = get_settings()
     mcp_toolset = _build_optional_mcp_toolset()
 
     log_metrics_tools: list[Any] = (
@@ -62,7 +61,7 @@ def build_parallel_investigation_agent() -> ParallelAgent:
 
     log_metrics_investigator = LlmAgent(
         name="log_metrics_investigator",
-        model=settings.agent_model,
+        model=build_resilient_model(),
         description="Analyzes structured logs and golden-signal metrics for anomalies.",
         instruction=(
             "You are the Telemetry & Logs Investigator.\n"
@@ -82,7 +81,7 @@ def build_parallel_investigation_agent() -> ParallelAgent:
 
     deploy_correlator = LlmAgent(
         name="deploy_correlator",
-        model=settings.agent_model,
+        model=build_resilient_model(),
         description="Correlates recent production deployments and config changes with incident onset.",
         instruction=(
             "You are the Release & Change Correlator.\n"
@@ -102,7 +101,7 @@ def build_parallel_investigation_agent() -> ParallelAgent:
 
     runbook_memory_researcher = LlmAgent(
         name="runbook_memory_researcher",
-        model=settings.agent_model,
+        model=build_resilient_model(),
         description="Retrieves SRE runbooks and historical incident lessons from long-term memory.",
         instruction=(
             "You are the Runbook & Institutional Memory Researcher.\n"

@@ -13,7 +13,7 @@ from sre_triage_agent.callbacks import (
     before_model_guardrail_callback,
     before_tool_guardrail_callback,
 )
-from sre_triage_agent.config import get_settings
+from sre_triage_agent.config import build_resilient_model, get_settings
 from sre_triage_agent.tools.remediation_tools import (
     create_incident_ticket,
     rollback_deployment,
@@ -48,7 +48,7 @@ def build_remediation_loop_agent() -> LoopAgent:
 
     remediation_planner = LlmAgent(
         name="remediation_planner",
-        model=settings.agent_model,
+        model=build_resilient_model(),
         description="Synthesizes parallel investigation findings into a safe, actionable remediation plan.",
         instruction=(
             "You are the Remediation Planner.\n"
@@ -82,7 +82,7 @@ def build_remediation_loop_agent() -> LoopAgent:
 
     safety_critic = LlmAgent(
         name="safety_critic",
-        model=settings.agent_model,
+        model=build_resilient_model(),
         description="Audits remediation plans for evidence grounding, blast radius, verification, and rollback safety.",
         instruction=(
             "You are the SRE Safety Critic.\n"

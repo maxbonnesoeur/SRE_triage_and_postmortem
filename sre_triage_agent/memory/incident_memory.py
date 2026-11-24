@@ -6,13 +6,17 @@ historical outages, root causes, and verified mitigations across restarts.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from sre_triage_agent.config import get_settings
+
+logger = logging.getLogger("sre_triage_agent.memory")
 
 SEED_INCIDENTS: list[dict[str, Any]] = [
     {
@@ -53,6 +57,7 @@ class IncidentMemoryStore:
         resolved_path = Path(db_path) if db_path is not None else get_settings().memory_db_path
         self.db_path = resolved_path
         self._memory_conn: sqlite3.Connection | None = None
+        self._pending_tasks: set[asyncio.Task[dict[str, Any]]] = set()
         if str(self.db_path) == ":memory:":
             self._memory_conn = sqlite3.connect(":memory:", check_same_thread=False)
             self._memory_conn.row_factory = sqlite3.Row
@@ -205,3 +210,71 @@ class IncidentMemoryStore:
         """Return total number of stored incident memories."""
         with self._connect() as conn:
             return int(conn.execute("SELECT COUNT(*) FROM incident_memories").fetchone()[0])
+
+    async def save_incident_async(
+        self,
+        incident_id: str,
+        service_name: str,
+        severity: str,
+        symptoms: str,
+        root_cause: str,
+        resolution: str,
+        lessons_learned: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Persist a resolved incident asynchronously without blocking the event loop."""
+        return await asyncio.to_thread(
+            self.save_incident,
+            incident_id,
+            service_name,
+            severity,
+            symptoms,
+            root_cause,
+            resolution,
+            lessons_learned,
+        )
+
+    def schedule_save_incident(
+        self,
+        incident_id: str,
+        service_name: str,
+        severity: str,
+        symptoms: str,
+        root_cause: str,
+        resolution: str,
+        lessons_learned: list[str] | None = None,
+    ) -> asyncio.Task[dict[str, Any]]:
+        """Offload incident memory consolidation to a tracked async background task."""
+        task: asyncio.Task[dict[str, Any]] = asyncio.create_task(
+            self.save_incident_async(
+                incident_id=incident_id,
+                service_name=service_name,
+                severity=severity,
+                symptoms=symptoms,
+                root_cause=root_cause,
+                resolution=resolution,
+                lessons_learned=lessons_learned,
+            ),
+            name=f"memory-save-{incident_id}",
+        )
+        self._pending_tasks.add(task)
+
+        def _on_done(done_task: asyncio.Task[dict[str, Any]]) -> None:
+            self._pending_tasks.discard(done_task)
+            if done_task.cancelled():
+                return
+            exc = done_task.exception()
+            if exc is not None:
+                logger.error(
+                    "Background incident memory consolidation failed: %s",
+                    exc,
+                    extra={"incident_id": incident_id, "status": "error"},
+                )
+
+        task.add_done_callback(_on_done)
+        return task
+
+    async def flush_pending_writes(self) -> None:
+        """Await all in-flight background memory consolidation tasks."""
+        if not self._pending_tasks:
+            return
+        await asyncio.gather(*list(self._pending_tasks), return_exceptions=True)

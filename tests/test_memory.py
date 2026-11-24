@@ -4,8 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from sre_triage_agent.memory.incident_memory import IncidentMemoryStore
-from sre_triage_agent.tools.memory_tools import save_incident_lesson, search_past_incidents
+from sre_triage_agent.tools.memory_tools import (
+    get_memory_store,
+    save_incident_lesson,
+    search_past_incidents,
+)
 
 
 def test_seeded_memory_recalls_payments_incident() -> None:
@@ -36,8 +42,9 @@ def test_memory_persists_across_store_restarts(tmp_path: Path) -> None:
     assert found[0]["incident_id"] == "INC-2026-9999"
 
 
-def test_save_incident_lesson_tool() -> None:
-    res = save_incident_lesson(
+@pytest.mark.asyncio
+async def test_save_incident_lesson_tool_async_background() -> None:
+    res = await save_incident_lesson(
         incident_id="INC-2026-0425",
         service_name="order-fulfillment",
         severity="SEV2",
@@ -46,6 +53,8 @@ def test_save_incident_lesson_tool() -> None:
         resolution="Rolled back v1.12.0",
         lessons_learned=["Load-test consumer memory before raising max_poll_records"],
     )
-    assert res["status"] == "ok"
+    assert res["status"] == "queued_async"
+    await get_memory_store().flush_pending_writes()
+
     recalled = search_past_incidents(service_name="order-fulfillment", symptom_query="OOMKilled")
     assert recalled["past_incidents"][0]["incident_id"] == "INC-2026-0425"

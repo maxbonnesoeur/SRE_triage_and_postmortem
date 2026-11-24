@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
@@ -12,12 +13,14 @@ from google.adk.models.llm_request import LlmRequest
 from google.adk.models.llm_response import LlmResponse
 from google.adk.tools.base_tool import BaseTool
 from google.adk.tools.tool_context import ToolContext
+from google.genai import types
 
 from sre_triage_agent.config import get_settings
 from sre_triage_agent.observability import get_tracer, metrics_registry
 from sre_triage_agent.tools.remediation_tools import DESTRUCTIVE_TOOLS
 
 logger = logging.getLogger("sre_triage_agent.callbacks")
+_background_memory_tasks: set[asyncio.Task[Any]] = set()
 
 # Regex patterns for scrubbing credentials & secrets before model invocation
 _SECRET_PATTERNS: list[tuple[re.Pattern[str], str]] = [
@@ -40,11 +43,25 @@ def redact_sensitive_text(text: str) -> tuple[str, bool]:
     return redacted, changed
 
 
+def sanitize_args_for_logging(args: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of tool arguments with sensitive tokens/secrets redacted."""
+    sanitized: dict[str, Any] = {}
+    for key, val in args.items():
+        if "token" in key.lower() or "secret" in key.lower() or "key" in key.lower():
+            sanitized[key] = "[REDACTED]" if val else ""
+        elif isinstance(val, str):
+            cleaned, _ = redact_sensitive_text(val)
+            sanitized[key] = cleaned
+        else:
+            sanitized[key] = val
+    return sanitized
+
+
 def before_model_guardrail_callback(
     callback_context: CallbackContext,
     llm_request: LlmRequest,
 ) -> LlmResponse | None:
-    """Scrub secrets/PII from outbound model requests and record timing metadata."""
+    """Log pre-execution LLM intent, scrub secrets/PII, and record timing metadata."""
     callback_context.state["_model_call_start_ts"] = time.perf_counter()
 
     redacted_any = False
@@ -61,8 +78,21 @@ def before_model_guardrail_callback(
         metrics_registry.record_pii_redaction()
         logger.warning(
             "Redacted sensitive token/PII before LLM call",
-            extra={"agent_name": callback_context.agent_name, "guardrail": "pii_redaction"},
+            extra={
+                "agent_name": callback_context.agent_name,
+                "phase": "pre_execution",
+                "guardrail": "pii_redaction",
+            },
         )
+
+    logger.info(
+        "Intending to invoke LLM",
+        extra={
+            "agent_name": callback_context.agent_name,
+            "phase": "pre_execution",
+            "status": "intended",
+        },
+    )
     return None
 
 
@@ -104,9 +134,26 @@ def before_tool_guardrail_callback(
     args: dict[str, Any],
     tool_context: ToolContext,
 ) -> dict[str, Any] | None:
-    """Enforce human-in-the-loop approval before destructive production tool calls."""
+    """Log intended tool actions pre-execution and enforce HITL approval guardrails."""
     tool_name = tool.name
     tool_context.state[f"_tool_start_{tool_name}"] = time.perf_counter()
+    sanitized_args = sanitize_args_for_logging(args)
+
+    metrics_registry.record_tool_intent()
+    with get_tracer().start_as_current_span(f"sre_agent.tool.intent.{tool_name}") as span:
+        span.set_attribute("tool.name", tool_name)
+        span.set_attribute("tool.phase", "pre_execution")
+        span.set_attribute("tool.is_destructive", tool_name in DESTRUCTIVE_TOOLS)
+
+    logger.info(
+        "Intending to execute tool",
+        extra={
+            "tool_name": tool_name,
+            "phase": "pre_execution",
+            "intended_args": sanitized_args,
+            "status": "intended",
+        },
+    )
 
     settings = get_settings()
     if tool_name in DESTRUCTIVE_TOOLS and settings.require_approval_for_destructive_ops:
@@ -118,6 +165,8 @@ def before_tool_guardrail_callback(
                 "Blocked destructive tool call pending human approval",
                 extra={
                     "tool_name": tool_name,
+                    "phase": "pre_execution",
+                    "intended_args": sanitized_args,
                     "guardrail": "human_approval_required",
                     "status": "blocked",
                 },
@@ -125,7 +174,7 @@ def before_tool_guardrail_callback(
             return {
                 "status": "blocked_pending_approval",
                 "tool": tool_name,
-                "requested_args": args,
+                "requested_args": sanitized_args,
                 "message": (
                     f"Safety guardrail blocked `{tool_name}` because it mutates production state. "
                     "Present the exact change, blast radius, and rollback plan to the on-call "
@@ -163,8 +212,40 @@ def after_tool_telemetry_callback(
         "Completed tool execution",
         extra={
             "tool_name": tool_name,
+            "phase": "post_execution",
             "latency_ms": latency_ms,
             "status": status,
         },
     )
+    return None
+
+
+async def after_agent_async_memory_callback(
+    callback_context: CallbackContext,
+) -> types.Content | None:
+    """Offload ADK session-to-memory consolidation to a non-blocking background task."""
+    inv_ctx = getattr(callback_context, "_invocation_context", None)
+    memory_service = getattr(inv_ctx, "memory_service", None)
+    session = getattr(inv_ctx, "session", None)
+    if memory_service is None or session is None:
+        return None
+
+    async def _consolidate() -> None:
+        try:
+            await memory_service.add_session_to_memory(session)
+            logger.info(
+                "Completed async background session memory consolidation",
+                extra={"agent_name": callback_context.agent_name, "status": "ok"},
+            )
+        except Exception as exc:
+            logger.warning(
+                "Async session memory consolidation failed: %s",
+                exc,
+                extra={"agent_name": callback_context.agent_name, "status": "error"},
+            )
+
+    task = asyncio.create_task(_consolidate(), name=f"session-memory-{callback_context.agent_name}")
+    _background_memory_tasks.add(task)
+    task.add_done_callback(_background_memory_tasks.discard)
+    metrics_registry.record_async_memory_task()
     return None

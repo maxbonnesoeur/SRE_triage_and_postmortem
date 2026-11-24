@@ -19,14 +19,16 @@ Architecture:
 from __future__ import annotations
 
 from google.adk.agents import LlmAgent, SequentialAgent
+from google.adk.apps.app import App, ContextCacheConfig, EventsCompactionConfig
 
 from sre_triage_agent.callbacks import (
+    after_agent_async_memory_callback,
     after_model_telemetry_callback,
     after_tool_telemetry_callback,
     before_model_guardrail_callback,
     before_tool_guardrail_callback,
 )
-from sre_triage_agent.config import get_settings
+from sre_triage_agent.config import build_resilient_model, get_settings
 from sre_triage_agent.observability import configure_observability
 from sre_triage_agent.sub_agents.intake_agent import build_intake_agent
 from sre_triage_agent.sub_agents.investigators import build_parallel_investigation_agent
@@ -61,12 +63,11 @@ def build_incident_triage_pipeline() -> SequentialAgent:
 def build_root_agent() -> LlmAgent:
     """Build the top-level Incident Commander agent discovered by ADK CLI/Web."""
     configure_observability()
-    settings = get_settings()
     triage_pipeline = build_incident_triage_pipeline()
 
     return LlmAgent(
         name="sre_incident_commander",
-        model=settings.agent_model,
+        model=build_resilient_model(),
         description=(
             "Enterprise SRE Incident Commander that triages active alerts, orchestrates "
             "parallel root-cause investigations, enforces production safety guardrails, "
@@ -95,8 +96,28 @@ def build_root_agent() -> LlmAgent:
         after_model_callback=after_model_telemetry_callback,
         before_tool_callback=before_tool_guardrail_callback,
         after_tool_callback=after_tool_telemetry_callback,
+        after_agent_callback=after_agent_async_memory_callback,
     )
 
 
-# Standard ADK entrypoint exported for `adk web`, `adk run`, and `adk eval`
+def build_adk_app(agent: LlmAgent | None = None) -> App:
+    """Wrap the root agent in an ADK App with context caching & history compaction."""
+    settings = get_settings()
+    return App(
+        name="sre_triage_agent",
+        root_agent=agent or build_root_agent(),
+        context_cache_config=ContextCacheConfig(
+            min_tokens=settings.context_cache_min_tokens,
+            ttl_seconds=settings.context_cache_ttl_seconds,
+            cache_intervals=10,
+        ),
+        events_compaction_config=EventsCompactionConfig(
+            compaction_interval=settings.compaction_interval,
+            overlap_size=settings.compaction_overlap_size,
+        ),
+    )
+
+
+# Standard ADK entrypoints exported for `adk web`, `adk run`, and `adk eval`
 root_agent = build_root_agent()
+app = build_adk_app(root_agent)

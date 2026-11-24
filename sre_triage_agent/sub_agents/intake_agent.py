@@ -10,16 +10,15 @@ from sre_triage_agent.callbacks import (
     before_model_guardrail_callback,
     before_tool_guardrail_callback,
 )
-from sre_triage_agent.config import get_settings
+from sre_triage_agent.config import build_resilient_model
 from sre_triage_agent.tools.telemetry_tools import list_active_alerts
 
 
 def build_intake_agent() -> LlmAgent:
     """Create the Intake Agent that normalizes alerts and classifies severity."""
-    settings = get_settings()
     return LlmAgent(
         name="incident_intake_agent",
-        model=settings.agent_model,
+        model=build_resilient_model(),
         description="Classifies incident severity, identifies impacted service, and captures symptoms.",
         instruction=(
             "You are the Stage 1 Incident Intake Specialist.\n"

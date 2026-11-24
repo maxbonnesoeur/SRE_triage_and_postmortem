@@ -10,17 +10,16 @@ from sre_triage_agent.callbacks import (
     before_model_guardrail_callback,
     before_tool_guardrail_callback,
 )
-from sre_triage_agent.config import get_settings
+from sre_triage_agent.config import build_resilient_model
 from sre_triage_agent.tools.artifact_tools import save_postmortem_artifact
 from sre_triage_agent.tools.memory_tools import save_incident_lesson
 
 
 def build_postmortem_agent() -> LlmAgent:
     """Create the Postmortem Agent that exports artifacts and updates long-term memory."""
-    settings = get_settings()
     return LlmAgent(
         name="postmortem_writer_agent",
-        model=settings.agent_model,
+        model=build_resilient_model(),
         description="Generates a blameless postmortem artifact and persists lessons to long-term memory.",
         instruction=(
             "You are the Stage 4 Blameless Postmortem & Knowledge Manager.\n"

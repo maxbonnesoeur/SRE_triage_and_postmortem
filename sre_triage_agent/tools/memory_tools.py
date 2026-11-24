@@ -52,7 +52,7 @@ def search_past_incidents(
     }
 
 
-def save_incident_lesson(
+async def save_incident_lesson(
     incident_id: str,
     service_name: str,
     severity: str,
@@ -62,7 +62,10 @@ def save_incident_lesson(
     lessons_learned: list[str],
     tool_context: ToolContext | None = None,
 ) -> dict[str, Any]:
-    """Persist a resolved incident and its lessons learned into long-term SQLite memory.
+    """Queue a resolved incident and its lessons for async background SQLite persistence.
+
+    Offloads database consolidation to a non-blocking background `asyncio.Task` so
+    postmortem generation never stalls the user-facing response path.
 
     Args:
         incident_id: Unique incident ID (e.g., "INC-2026-0412").
@@ -75,9 +78,10 @@ def save_incident_lesson(
         tool_context: Optional ADK ToolContext to update session state.
 
     Returns:
-        Confirmation payload with the persisted memory record.
+        Confirmation payload indicating the incident memory write was scheduled asynchronously.
     """
-    saved = get_memory_store().save_incident(
+    store = get_memory_store()
+    task = store.schedule_save_incident(
         incident_id=incident_id,
         service_name=service_name,
         severity=severity,
@@ -87,5 +91,14 @@ def save_incident_lesson(
         lessons_learned=lessons_learned,
     )
     if tool_context is not None:
-        tool_context.state["last_persisted_incident_id"] = saved["incident_id"]
-    return {"status": "ok", "saved_memory": saved}
+        tool_context.state["last_persisted_incident_id"] = incident_id.strip()
+    return {
+        "status": "queued_async",
+        "task_name": task.get_name(),
+        "saved_memory": {
+            "incident_id": incident_id.strip(),
+            "service_name": service_name.strip().lower(),
+            "severity": severity.strip().upper(),
+            "lessons_learned": lessons_learned,
+        },
+    }
